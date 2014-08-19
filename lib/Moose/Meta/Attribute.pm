@@ -1322,7 +1322,7 @@ all of the methods for both classes are documented here.
 
 =head1 METHODS
 
-This class provides the following methods
+This class provides the following methods:
 
 =head2 Creation
 
