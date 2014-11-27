@@ -70,66 +70,81 @@ sub delegate_to_method { (shift)->{'delegate_to_method'} }
 sub _initialize_body {
     my $self = shift;
 
-    my $method_to_call = $self->delegate_to_method;
-    return $self->{body} = $method_to_call
-        if ref $method_to_call;
+    $self->{body} = $self->_generate_inline_method;
+}
 
-    my $accessor = $self->_get_delegate_accessor;
+sub _generate_inline_method {
+    my $self = shift;
 
-    my $handle_name = $self->name;
+    my $attr = $self->associated_attribute;
+    # If the delegation isn't to a coderef then inlining the method name
+    # should be faster (I think).
+    my $call
+        = ref $self->delegate_to_method
+        ? '$method_to_call'
+        : $self->delegate_to_method;
 
-    # NOTE: we used to do a goto here, but the goto didn't handle
-    # failure correctly (it just returned nothing), so I took that
-    # out. However, the more I thought about it, the less I liked it
-    # doing the goto, and I preferred the act of delegation being
-    # actually represented in the stack trace.  - SL
-    # not inlining this, since it won't really speed things up at
-    # all... the only thing that would end up different would be
-    # interpolating in $method_to_call, and a bunch of things in the
-    # error handling that mostly never gets called - doy
-    $self->{body} = sub {
-        my $instance = shift;
-        my $proxy    = $instance->$accessor();
+    $call .=
+        @{ $self->curried_arguments }
+        ? '(@curried, @_)'
+        : '(@_)';
 
-        if( !defined $proxy ) {
-            throw_exception( AttributeValueIsNotDefined => method     => $self,
-                                                           instance   => $instance,
-                                                           attribute  => $self->associated_attribute,
-                           );
-        }
-        elsif( ref($proxy) && !blessed($proxy) ) {
-            throw_exception( AttributeValueIsNotAnObject => method      => $self,
-                                                            instance    => $instance,
-                                                            attribute   => $self->associated_attribute,
-                                                            given_value => $proxy
-                           );
-        }
+    my @source = (
+        'sub {',
+            'my $proxy = ' . $attr->_inline_instance_get('$_[0]') . ';',
+            'if ( !defined $proxy ) {',
+                $self->_inline_throw_exception(
+                    'AttributeValueIsNotDefined',
+                    'method    => $_[0]->meta->find_method_by_name(' . B::perlstring( $self->name ) . '),' .
+                    'instance  => $_[0],' .
+                    'attribute => $_[0]->meta->find_attribute_by_name('. B::perlstring(
+                        $self->associated_attribute->name
+                        ) . ')',
+                    ) . ';',
+            '} elsif( ref($proxy) && !Scalar::Util::blessed($proxy) ) {',
+                $self->_inline_throw_exception(
+                    'AttributeValueIsNotAnObject',
+                    'method    => $_[0]->meta->find_method_by_name(' . B::perlstring( $self->name ) . '),' .
+                    'instance  => $_[0],' .
+                    'attribute => $_[0]->meta->find_attribute_by_name('. B::perlstring(
+                        $self->associated_attribute->name
+                        ) . '),' .
+                    'given_value => $proxy',
+                    ) . ';',
+            '}',
+            'return $proxy->' . $call . ';',
+        '}',
+    );
 
-        unshift @_, @{ $self->curried_arguments };
-        $proxy->$method_to_call(@_);
+    return try {
+        $self->_compile_code(
+            source      => \@source,
+            description => 'inline delegation for '
+                . $self->associated_attribute->name . '->'
+                . $call,
+        );
+    }
+    catch {
+        $self->_throw_exception(
+            'CouldNotGenerateInlineAttributeMethod',
+            instance => $self,
+            error    => $_,
+            option   => 'handles',
+        );
     };
 }
 
-sub _get_delegate_accessor {
+sub _eval_environment {
     my $self = shift;
-    my $attr = $self->associated_attribute;
 
-    # NOTE:
-    # always use a named method when
-    # possible, if you use the method
-    # ref and there are modifiers on
-    # the accessors then it will not
-    # pick up the modifiers too. Only
-    # the named method will assure that
-    # we also have any modifiers run.
-    # - SL
-    my $accessor = $attr->has_read_method
-        ? $attr->get_read_method
-        : $attr->get_read_method_ref;
+    my %env;
+    $env{'@curried'} = $self->curried_arguments
+        if @{ $self->curried_arguments };
 
-    $accessor = $accessor->body if Scalar::Util::blessed $accessor;
+    $env{'$method_to_call'} = $self->delegate_to_method
+        if ref $self->delegate_to_method;
 
-    return $accessor;
+    return \%env;
 }
 
 1;
