@@ -3,6 +3,15 @@ for, noteworthy changes.
 
 {{$NEXT}}
 
+  [DOCUMENTATION]
+
+  - For all Moose::Meta::* modules which subclass a corresponding
+    Class::MOP::* class, the docs the Class::MOP::* portion have been merged
+    into the Moose::Meta::* module. This should make it easier to find the
+    documentation for methods on meta objects.
+  - Made all docs use =head2 and =head3 for methods/functions so that they
+    appear as part of the table of contents on MetaCPAN.
+
 2.1403   2014-12-07
 
   [DOCUMENTATION]
